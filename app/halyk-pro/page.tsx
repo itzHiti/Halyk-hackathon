@@ -1,12 +1,21 @@
 'use client';
 import Link from 'next/link';
-import { Shield, Star, CheckCircle, ArrowRight } from 'lucide-react';
+import { Shield, Star, CheckCircle, ArrowRight, ChevronLeft } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 
 export default function RoleSelectionPage() {
+  const router = useRouter();
+
   return (
     <div className="flex flex-col min-h-screen bg-white">
       {/* Header */}
       <div className="bg-halyk px-4 pt-10 pb-8">
+        <button
+          onClick={() => router.back()}
+          className="w-9 h-9 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors mb-4"
+        >
+          <ChevronLeft size={22} className="text-white" />
+        </button>
         <div className="flex items-center gap-2 mb-4">
           <span className="text-3xl">⚖️</span>
           <div>
@@ -46,13 +55,6 @@ export default function RoleSelectionPage() {
                 <p className="text-sm text-gray-600 leading-relaxed">
                   Нужна помощь юриста, адвоката, бухгалтера или налогового консультанта
                 </p>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {['ИП', 'ТОО', 'Физлицо'].map(t => (
-                    <span key={t} className="text-xs bg-white text-halyk-dark font-medium px-2 py-0.5 rounded-full border border-halyk/20">
-                      {t}
-                    </span>
-                  ))}
-                </div>
               </div>
               <ArrowRight size={20} className="text-halyk mt-1 flex-shrink-0" />
             </div>
@@ -69,13 +71,6 @@ export default function RoleSelectionPage() {
                 <p className="text-sm text-gray-600 leading-relaxed">
                   Хочу предоставлять услуги клиентам через Halyk Pro
                 </p>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {['Верификация', 'Эскроу оплата', 'Клиенты'].map(t => (
-                    <span key={t} className="text-xs bg-gray-100 text-gray-600 font-medium px-2 py-0.5 rounded-full">
-                      {t}
-                    </span>
-                  ))}
-                </div>
               </div>
               <ArrowRight size={20} className="text-gray-400 mt-1 flex-shrink-0" />
             </div>

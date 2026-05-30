@@ -3,7 +3,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { getExpertById } from '@/lib/mock-data';
 import MobileHeader from '@/components/ui/MobileHeader';
 import StarRating from '@/components/ui/StarRating';
-import { CheckCircle, Clock, Briefcase, MessageCircle, Star, Shield } from 'lucide-react';
+import { CheckCircle, Clock, Briefcase, Star, Shield } from 'lucide-react';
 
 export default function ExpertProfilePage() {
   const { id } = useParams<{ id: string }>();
@@ -154,16 +154,12 @@ export default function ExpertProfilePage() {
       </div>
 
       {/* Bottom CTA */}
-      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[390px] bg-white border-t border-gray-200 px-4 py-4 space-y-2">
+      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[390px] bg-white border-t border-gray-200 px-4 py-4">
         <button
           onClick={() => router.push(`/client/deal/new?expert=${expert.id}`)}
           className="w-full bg-halyk text-white rounded-2xl py-4 flex items-center justify-center gap-2 font-bold text-base shadow-lg shadow-halyk/30"
         >
           Начать сделку
-        </button>
-        <button className="w-full bg-gray-100 text-gray-700 rounded-2xl py-3 flex items-center justify-center gap-2 font-medium text-sm">
-          <MessageCircle size={16} />
-          Задать вопрос
         </button>
       </div>
     </div>

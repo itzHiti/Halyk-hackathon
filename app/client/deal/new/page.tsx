@@ -3,7 +3,10 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import MobileHeader from '@/components/ui/MobileHeader';
 import { getExpertById } from '@/lib/mock-data';
-import { Shield, Lock, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Shield, CheckCircle, Paperclip, X, FileText, Image } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+
+interface UploadedFile { name: string; size: number; type: string; }
 
 function NewDealContent() {
   const searchParams = useSearchParams();
@@ -12,28 +15,46 @@ function NewDealContent() {
   const expert = getExpertById(expertId);
 
   const [description, setDescription] = useState('');
-  const [amount, setAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [showEscrowInfo, setShowEscrowInfo] = useState(false);
+  const [files, setFiles] = useState<UploadedFile[]>([]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(e.target.files || []);
+    setFiles(prev => [...prev, ...selected.map(f => ({ name: f.name, size: f.size, type: f.type }))]);
+    e.target.value = '';
+  };
+
+  const removeFile = (i: number) => setFiles(prev => prev.filter((_, idx) => idx !== i));
+  const formatSize = (b: number) => b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} КБ` : `${(b / (1024 * 1024)).toFixed(1)} МБ`;
+
+  const handleSend = async () => {
+    if (!description.trim()) return;
+    setIsProcessing(true);
+
+    const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const { data, error } = await supabase.from('deals').insert({
+      room_code: roomCode,
+      description,
+      client_name: 'Клиент',
+      status: 'pending',
+    }).select().single();
+
+    if (!error && data) {
+      router.push(`/deal/${roomCode}?role=client`);
+    } else {
+      // Fallback if Supabase not connected
+      router.push(`/deal/demo-deal-1?role=client`);
+    }
+    setIsProcessing(false);
+  };
 
   if (!expert) return null;
 
-  const estimatedAmount = amount ? parseInt(amount.replace(/\D/g, '')) : expert.hourly_rate * 2;
-  const commission = Math.round(estimatedAmount * 0.05);
-  const expertReceives = estimatedAmount - commission;
-
-  const handleStartDeal = async () => {
-    setIsProcessing(true);
-    await new Promise(r => setTimeout(r, 2000));
-    router.push(`/deal/demo-deal-1?expert=${expertId}`);
-  };
-
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-      <MobileHeader title="Подтверждение сделки" />
-
+      <MobileHeader title="Новый запрос" backHref={`/client/experts/${expertId}`} />
       <div className="flex-1 px-4 py-4 space-y-3">
-        {/* Expert summary */}
+        {/* Expert */}
         <div className="bg-white rounded-2xl border border-gray-200 p-4 flex gap-3 items-center">
           <img src={expert.avatar} alt={expert.name} className="w-12 h-12 rounded-xl bg-gray-100" />
           <div className="flex-1">
@@ -48,105 +69,80 @@ function NewDealContent() {
 
         {/* Description */}
         <div className="bg-white rounded-2xl border border-gray-200 p-4">
-          <label className="text-sm font-semibold text-gray-700 block mb-2">
-            Опишите задачу
-          </label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Чем конкретно нужна помощь специалиста..."
-            className="w-full text-sm text-gray-700 placeholder:text-gray-300 resize-none focus:outline-none"
-            rows={3}
-          />
+          <label className="text-sm font-semibold text-gray-700 block mb-1">Опишите задачу</label>
+          <p className="text-xs text-gray-400 mb-2">Чем подробнее — тем точнее специалист оценит стоимость и сроки</p>
+          <textarea value={description} onChange={e => setDescription(e.target.value)}
+            placeholder="Что нужно сделать, какие есть детали, сроки..."
+            className="w-full text-sm text-gray-700 placeholder:text-gray-300 resize-none focus:outline-none" rows={5} autoFocus />
         </div>
 
-        {/* Amount */}
+        {/* Files */}
         <div className="bg-white rounded-2xl border border-gray-200 p-4">
-          <label className="text-sm font-semibold text-gray-700 block mb-1">
-            Сумма в эскроу (₸)
-          </label>
-          <p className="text-xs text-gray-400 mb-2">Деньги замораживаются и переходят специалисту только после вашего подтверждения</p>
-          <input
-            type="text"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder={`Рекомендовано: ${(expert.hourly_rate * 2).toLocaleString('ru')} ₸`}
-            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-halyk"
-          />
-        </div>
-
-        {/* Escrow breakdown */}
-        <div className="bg-white rounded-2xl border border-gray-200 p-4">
-          <button
-            className="w-full flex items-center justify-between"
-            onClick={() => setShowEscrowInfo(!showEscrowInfo)}
-          >
-            <div className="flex items-center gap-2">
-              <Lock size={15} className="text-halyk" />
-              <span className="text-sm font-semibold text-gray-700">Детали эскроу</span>
-            </div>
-            {showEscrowInfo ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
-          </button>
-
-          {showEscrowInfo && (
-            <div className="mt-3 space-y-2 text-sm animate-fade-in">
-              <div className="flex justify-between">
-                <span className="text-gray-500">Сумма сделки</span>
-                <span className="font-medium">{estimatedAmount.toLocaleString('ru')} ₸</span>
-              </div>
-              <div className="flex justify-between text-orange-600">
-                <span>Комиссия платформы (5%)</span>
-                <span className="font-medium">−{commission.toLocaleString('ru')} ₸</span>
-              </div>
-              <div className="flex justify-between border-t pt-2">
-                <span className="text-gray-500">Специалист получит</span>
-                <span className="font-bold text-gray-900">{expertReceives.toLocaleString('ru')} ₸</span>
-              </div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-sm font-semibold text-gray-700">Документы</label>
+            <span className="text-xs text-gray-400">необязательно</span>
+          </div>
+          <p className="text-xs text-gray-400 mb-3">Договоры, акты, выписки и другие файлы</p>
+          {files.length > 0 && (
+            <div className="space-y-2 mb-3">
+              {files.map((f, i) => (
+                <div key={i} className="flex items-center gap-2.5 bg-gray-50 rounded-xl px-3 py-2">
+                  {f.type.startsWith('image/') ? <Image size={16} className="text-blue-400 flex-shrink-0" /> : <FileText size={16} className="text-halyk flex-shrink-0" />}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-gray-800 truncate">{f.name}</p>
+                    <p className="text-[10px] text-gray-400">{formatSize(f.size)}</p>
+                  </div>
+                  <button onClick={() => removeFile(i)} className="text-gray-300 hover:text-gray-500"><X size={14} /></button>
+                </div>
+              ))}
             </div>
           )}
+          <label className="flex items-center justify-center gap-2 w-full border border-dashed border-gray-300 rounded-xl py-3 cursor-pointer hover:border-halyk hover:bg-halyk-light/30 transition-colors">
+            <Paperclip size={15} className="text-gray-400" />
+            <span className="text-sm text-gray-500">Прикрепить файл</span>
+            <input type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={handleFileChange} className="hidden" />
+          </label>
         </div>
 
-        {/* Guarantees */}
-        <div className="bg-halyk-light rounded-2xl p-4 space-y-2">
-          <h3 className="text-sm font-semibold text-halyk-dark">Гарантии Halyk Pro</h3>
+        {/* How it works */}
+        <div className="bg-halyk-light rounded-2xl p-4 space-y-2.5">
+          <h3 className="text-sm font-semibold text-halyk-dark">Как это работает</h3>
           {[
-            'Деньги хранятся на счёте Halyk Bank — не у специалиста',
-            'Оплата переходит только после вашего подтверждения',
-            'Переписка записывается для разрешения споров',
-            'Специалист верифицирован через Halyk ID',
-          ].map((g, i) => (
-            <div key={i} className="flex items-start gap-2">
-              <CheckCircle size={13} className="text-halyk mt-0.5 flex-shrink-0" />
-              <p className="text-xs text-halyk-dark leading-relaxed">{g}</p>
+            'Вы отправляете запрос — специалист получает его',
+            'Специалист изучает и отвечает с ценой и сроками',
+            'Вы принимаете оффер и оплачиваете в эскроу',
+            'После выполнения подтверждаете — деньги разблокируются',
+          ].map((t, i) => (
+            <div key={i} className="flex items-start gap-2.5">
+              <div className="w-5 h-5 rounded-full bg-halyk flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span className="text-[10px] text-white font-bold">{i + 1}</span>
+              </div>
+              <p className="text-xs text-halyk-dark leading-relaxed">{t}</p>
             </div>
           ))}
         </div>
 
+        {/* Guarantees */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-2">
+          <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+            <Shield size={14} className="text-halyk" /> Защита Halyk Pro
+          </h3>
+          {['Деньги в эскроу у Halyk Bank, не у специалиста', 'Оплата только после вашего подтверждения', 'Специалист верифицирован через Halyk ID'].map((g, i) => (
+            <div key={i} className="flex items-start gap-2">
+              <CheckCircle size={12} className="text-halyk mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-gray-600">{g}</p>
+            </div>
+          ))}
+        </div>
         <div className="h-24" />
       </div>
 
-      {/* Bottom CTA */}
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[390px] bg-white border-t border-gray-200 px-4 py-4">
-        <button
-          onClick={handleStartDeal}
-          disabled={isProcessing}
-          className="w-full bg-halyk text-white rounded-2xl py-4 flex items-center justify-center gap-2 font-bold text-base shadow-lg shadow-halyk/30 disabled:opacity-70"
-        >
-          {isProcessing ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Отправляем в эскроу...
-            </>
-          ) : (
-            <>
-              <Shield size={18} />
-              Отправить в эскроу
-            </>
-          )}
+        <button onClick={handleSend} disabled={!description.trim() || isProcessing}
+          className="w-full bg-halyk text-white rounded-2xl py-4 flex items-center justify-center gap-2 font-bold text-base shadow-lg shadow-halyk/30 disabled:opacity-50">
+          {isProcessing ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Отправляем...</> : 'Отправить запрос специалисту'}
         </button>
-        <p className="text-center text-[10px] text-gray-400 mt-2">
-          Нажимая кнопку, вы соглашаетесь с условиями сделки
-        </p>
+        <p className="text-center text-[10px] text-gray-400 mt-2">Специалист ответит с ценой — вы ничего не платите сейчас</p>
       </div>
     </div>
   );
