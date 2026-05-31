@@ -1,11 +1,9 @@
 'use client';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { Suspense, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import { getExpertById } from '@/lib/mock-data';
+import { getDeal, sendMessage, currentUserId } from '@/lib/api';
+import { DEMO_EXPERT } from '@/lib/mock-data';
 import { ChevronLeft, Paperclip, X, FileText, Image, CheckCircle, Send } from 'lucide-react';
-
-const DEMO_EXPERT = getExpertById('exp-5')!;
 
 interface UploadedFile { name: string; size: number; type: string; }
 
@@ -34,19 +32,18 @@ function SubmitContent() {
     setIsSubmitting(true);
 
     // Load deal to get id
-    const { data: deal } = await supabase.from('deals').select('id').eq('room_code', roomCode).single();
+    const deal = await getDeal(roomCode, currentUserId());
 
     if (deal) {
       const fileNames = files.map(f => f.name);
       const filesNote = fileNames.length > 0 ? `\n\n📎 Прикреплённые файлы: ${fileNames.join(', ')}` : '';
       const content = `📋 *Работа выполнена*\n\n${report}${filesNote}`;
 
-      await supabase.from('messages').insert({
-        deal_id: deal.id,
+      await sendMessage(deal.id, {
         sender_role: 'expert',
         sender_name: DEMO_EXPERT.name,
         content,
-      });
+      }, currentUserId());
     }
 
     setIsSubmitting(false);

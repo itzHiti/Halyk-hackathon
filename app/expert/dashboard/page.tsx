@@ -1,105 +1,117 @@
 'use client';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { getExpertById } from '@/lib/mock-data';
-import { supabase } from '@/lib/supabase';
-import { CheckCircle, MessageCircle, Clock, Bell, TrendingUp, Lock, Loader2, Flag } from 'lucide-react';
+import { DEMO_EXPERT } from '@/lib/mock-data';
+import { Deal, listDeals, openExpertChannel, claimDeal as apiClaimDeal, currentUserId, getCurrentUser, getExpert, rememberDeal, User, ApiExpert } from '@/lib/api';
+import { timeAgo } from '@/lib/date';
+import { LoadingScreen } from '@/components/ui/StatusScreen';
+import { CheckCircle, MessageCircle, Clock, Bell, TrendingUp, Lock, Loader2, Flag, ChevronLeft } from 'lucide-react';
 import { useState, useEffect } from 'react';
-
-const DEMO_EXPERT = getExpertById('exp-5')!;
-
-interface Deal {
-  id: string;
-  room_code: string;
-  client_name: string;
-  description: string | null;
-  status: string;
-  offer_price: number | null;
-  offer_deadline: string | null;
-  created_at: string;
-}
 
 export default function ExpertDashboardPage() {
   const router = useRouter();
-  const expert = DEMO_EXPERT;
 
   const [pendingDeals, setPendingDeals] = useState<Deal[]>([]);
   const [activeDeals, setActiveDeals] = useState<Deal[]>([]);
   const [loading, setLoading] = useState(true);
   const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<ApiExpert | null>(null);
+
+  // ── Гейтинг: только верифицированный специалист (is_verified_expert) ─────────
+  useEffect(() => {
+    const uid = currentUserId();
+    getCurrentUser(uid).then(me => {
+      if (!me.is_verified_expert) {
+        router.replace('/expert/verify');
+        return;
+      }
+      setUser(me);
+      setAuthorized(true);
+      if (me.expert_id) getExpert(me.expert_id).then(p => { if (p) setProfile(p); }).catch(() => {});
+    });
+  }, [router]);
+
+  // Данные вошедшего специалиста: реальный профиль (/experts/{id}) с фолбэком на сид
+  const expert = {
+    ...DEMO_EXPERT,
+    name: profile?.name || user?.display_name || DEMO_EXPERT.name,
+    avatar: profile?.avatar || DEMO_EXPERT.avatar,
+    categoryLabel: profile?.categoryLabel || DEMO_EXPERT.categoryLabel,
+    rating: profile?.rating || DEMO_EXPERT.rating,
+    completed_deals: profile?.completed_deals ?? DEMO_EXPERT.completed_deals,
+  };
+
+  // GET /deals возвращает ОБЩИЙ список (не скоупится по эксперту, BACKEND.md §5.3):
+  //  • «Новые запросы» — это пул: pending и ещё никем не взятые (expert_user_id == null).
+  //  • «Мои сделки» — только те, что взял текущий эксперт (expert_user_id == uid).
+  const isPool = (d: Deal) => d.status === 'pending' && !d.expert_user_id;
+  const isMine = (d: Deal, uid: string) =>
+    d.expert_user_id === uid && (d.status === 'claimed' || d.status === 'offered' || d.status === 'active');
 
   // ── Load deals ─────────────────────────────────────────────────────────────
   const loadDeals = async () => {
-    const { data } = await supabase
-      .from('deals')
-      .select('*')
-      .in('status', ['pending', 'claimed', 'offered', 'active'])
-      .order('created_at', { ascending: false });
-
-    if (data) {
-      setPendingDeals((data as Deal[]).filter(d => d.status === 'pending' || d.status === 'claimed'));
-      setActiveDeals((data as Deal[]).filter(d => d.status === 'offered' || d.status === 'active'));
+    const uid = currentUserId();
+    try {
+      const data = await listDeals(
+        { status: ['pending', 'claimed', 'offered', 'active'], order: 'created_at.desc' },
+        uid,
+      );
+      setPendingDeals(data.filter(isPool));
+      setActiveDeals(data.filter(d => isMine(d, uid)));
+    } catch {
+      // бэкенд недоступен — оставляем пустые списки
     }
     setLoading(false);
   };
 
-  // ── Real-time subscriptions ────────────────────────────────────────────────
+  // ── Real-time subscriptions (WebSocket) ─────────────────────────────────────
   useEffect(() => {
+    if (!authorized) return;
+    const uid = currentUserId();
     loadDeals();
-    const ch = supabase.channel('expert-dashboard')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'deals' }, (payload) => {
-        const deal = payload.new as Deal;
-        if (deal.status === 'pending') {
-          setPendingDeals(prev => [deal, ...prev]);
-        }
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'deals' }, (payload) => {
-        const deal = payload.new as Deal;
-        if (deal.status === 'pending' || deal.status === 'claimed') {
-          setPendingDeals(prev => {
-            const exists = prev.find(d => d.id === deal.id);
-            if (exists) return prev.map(d => d.id === deal.id ? deal : d);
-            return [deal, ...prev];
-          });
-          setActiveDeals(prev => prev.filter(d => d.id !== deal.id));
-        } else if (deal.status === 'offered' || deal.status === 'active') {
-          setPendingDeals(prev => prev.filter(d => d.id !== deal.id));
-          setActiveDeals(prev => {
-            const exists = prev.find(d => d.id === deal.id);
-            if (exists) return prev.map(d => d.id === deal.id ? deal : d);
-            return [deal, ...prev];
-          });
-        } else {
-          // completed / cancelled — remove from all
-          setPendingDeals(prev => prev.filter(d => d.id !== deal.id));
-          setActiveDeals(prev => prev.filter(d => d.id !== deal.id));
-        }
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, []);
+    const ws = openExpertChannel((ev) => {
+      const deal = ev.data;
+      const upsert = (prev: Deal[]) => [deal, ...prev.filter(d => d.id !== deal.id)];
+      const drop = (prev: Deal[]) => prev.filter(d => d.id !== deal.id);
+
+      if (ev.type === 'deal.created') {
+        if (isPool(deal)) setPendingDeals(upsert);
+        return;
+      }
+      // deal.updated: пересортировываем по принадлежности
+      setPendingDeals(isPool(deal) ? upsert : drop);
+      setActiveDeals(isMine(deal, uid) ? upsert : drop);
+    });
+    return () => ws.close();
+  }, [authorized]);
 
   // ── Claim a deal ───────────────────────────────────────────────────────────
   const claimDeal = async (deal: Deal) => {
     setClaimingId(deal.id);
-    await supabase.from('deals').update({
-      status: 'claimed',
-      expert_name: expert.name,
-    }).eq('id', deal.id).eq('status', 'pending'); // atomic: only claim if still pending
-    router.push(`/deal/${deal.room_code}?role=expert`);
+    try {
+      await apiClaimDeal(deal.id, expert.name, currentUserId()); // 409 если уже занято
+      rememberDeal(currentUserId(), deal.room_code);
+      router.push(`/deal/${deal.room_code}?role=expert`);
+    } catch {
+      // сделку уже забрали или ошибка — убираем из списка
+      setPendingDeals(prev => prev.filter(d => d.id !== deal.id));
+      setClaimingId(null);
+    }
   };
 
-  const timeAgo = (ts: string) => {
-    const sec = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
-    if (sec < 60) return 'только что';
-    if (sec < 3600) return `${Math.floor(sec / 60)} мин назад`;
-    return `${Math.floor(sec / 3600)} ч назад`;
-  };
+  // Пока проверяем верификацию — показываем загрузку (или редиректим на /expert/verify)
+  if (authorized === null) return <LoadingScreen text="Проверяем доступ..." />;
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-halyk px-4 pt-8 pb-5">
+        <button onClick={() => router.push('/halyk-pro')}
+          className="w-9 h-9 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors mb-3">
+          <ChevronLeft size={22} className="text-white" />
+        </button>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="relative">

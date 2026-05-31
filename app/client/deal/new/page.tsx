@@ -1,22 +1,42 @@
 'use client';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import MobileHeader from '@/components/ui/MobileHeader';
+import { LoadingScreen, MessageScreen, MessageAction } from '@/components/ui/StatusScreen';
 import { getExpertById } from '@/lib/mock-data';
 import { Shield, CheckCircle, Paperclip, X, FileText, Image } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { createDeal, currentUserId, getExpert, rememberDeal } from '@/lib/api';
 
 interface UploadedFile { name: string; size: number; type: string; }
+interface DealExpert { id: string; name: string; avatar: string; categoryLabel: string; hourly_rate: number }
 
 function NewDealContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const expertId = searchParams.get('expert') || 'exp-5';
-  const expert = getExpertById(expertId);
 
+  const [expert, setExpert] = useState<DealExpert | null>(null);
+  const [loadingExpert, setLoadingExpert] = useState(true);
   const [description, setDescription] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [files, setFiles] = useState<UploadedFile[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let e: DealExpert | null = null;
+      try {
+        const real = await getExpert(expertId);
+        if (real) e = { id: real.id, name: real.name, avatar: real.avatar, categoryLabel: real.categoryLabel, hourly_rate: real.hourly_rate };
+      } catch { /* бэкенд недоступен */ }
+      if (!e) {
+        const m = getExpertById(expertId);
+        if (m) e = { id: m.id, name: m.name, avatar: m.avatar, categoryLabel: m.categoryLabel, hourly_rate: m.hourly_rate };
+      }
+      if (!cancelled) { setExpert(e); setLoadingExpert(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [expertId]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files || []);
@@ -32,23 +52,29 @@ function NewDealContent() {
     setIsProcessing(true);
 
     const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const { data, error } = await supabase.from('deals').insert({
-      room_code: roomCode,
-      description,
-      client_name: 'Клиент',
-      status: 'pending',
-    }).select().single();
-
-    if (!error && data) {
-      router.push(`/deal/${roomCode}?role=client`);
-    } else {
-      // Fallback if Supabase not connected
+    const uid = currentUserId();
+    try {
+      const deal = await createDeal({ room_code: roomCode, description, client_name: 'Клиент' }, uid);
+      rememberDeal(uid, deal.room_code);
+      router.push(`/deal/${deal.room_code}?role=client`);
+    } catch {
+      // Fallback if backend not reachable
       router.push(`/deal/demo-deal-1?role=client`);
     }
     setIsProcessing(false);
   };
 
-  if (!expert) return null;
+  if (loadingExpert) return <LoadingScreen text="Загружаем специалиста..." />;
+
+  if (!expert) {
+    return (
+      <MessageScreen
+        icon={<p className="text-2xl">🔍</p>}
+        title="Специалист не найден"
+        action={<MessageAction label="К выбору специалиста" onClick={() => router.push('/client/category')} />}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">

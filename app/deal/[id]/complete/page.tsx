@@ -1,34 +1,53 @@
 'use client';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
-import { Suspense, useState } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { getExpertById } from '@/lib/mock-data';
+import { Deal, getDeal, reviewDeal, currentUserId } from '@/lib/api';
 import MobileHeader from '@/components/ui/MobileHeader';
 import { CheckCircle, Star, PartyPopper } from 'lucide-react';
 
 function CompleteContent() {
-  const { id } = useParams<{ id: string }>();
+  const { id: roomCode } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const router = useRouter();
   const expertId = searchParams.get('expert') || 'exp-5';
   const expert = getExpertById(expertId);
 
+  const [deal, setDeal] = useState<Deal | null>(null);
   const [stage, setStage] = useState<'confirm' | 'review' | 'done'>('confirm');
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Подтягиваем реальную сделку — для сумм и id при отправке отзыва
+  useEffect(() => {
+    getDeal(roomCode, currentUserId()).then(d => { if (d) setDeal(d); }).catch(() => {});
+  }, [roomCode]);
+
   if (!expert) return null;
+
+  // Суммы из сделки (фолбэк — демонстрационные значения, если сделка не загрузилась)
+  const escrow = deal?.escrow_amount || deal?.offer_price || 60000;
+  const commission = deal?.commission ?? Math.round(escrow * 0.05);
+  const commissionPct = deal?.commission_pct ?? 5;
+  const payout = escrow - commission;
+  const cashback = Math.round(escrow * 0.01);
+  const fmt = (n: number) => n.toLocaleString('ru');
 
   const handleRelease = async () => {
     setIsProcessing(true);
-    await new Promise(r => setTimeout(r, 1800));
+    await new Promise(r => setTimeout(r, 1800)); // анимация перевода — только на фронте
     setIsProcessing(false);
     setStage('review');
   };
 
   const handleSubmitReview = async () => {
     setIsProcessing(true);
-    await new Promise(r => setTimeout(r, 1000));
+    if (deal) {
+      try {
+        await reviewDeal(deal.id, { rating, comment }, currentUserId());
+      } catch { /* отзыв best-effort — не блокируем завершение */ }
+    }
     setIsProcessing(false);
     setStage('done');
   };
@@ -46,11 +65,11 @@ function CompleteContent() {
         <div className="bg-halyk-light rounded-2xl p-4 w-full max-w-sm mb-6">
           <div className="flex justify-between text-sm mb-1">
             <span className="text-gray-500">Выплачено специалисту</span>
-            <span className="font-bold text-gray-900">57 000 ₸</span>
+            <span className="font-bold text-gray-900">{fmt(payout)} ₸</span>
           </div>
           <div className="flex justify-between text-sm mb-1">
             <span className="text-gray-500">Кэшбэк Halyk Bonus</span>
-            <span className="font-bold text-halyk">+600 ₸ 🎁</span>
+            <span className="font-bold text-halyk">+{fmt(cashback)} ₸ 🎁</span>
           </div>
           <div className="flex justify-between text-sm border-t border-halyk/20 pt-2 mt-2">
             <span className="text-gray-500">Ваш отзыв</span>
@@ -87,9 +106,9 @@ function CompleteContent() {
               <CheckCircle size={28} className="text-white" />
             </div>
             <div>
-              <p className="font-bold text-gray-900">57 000 ₸ переведено</p>
+              <p className="font-bold text-gray-900">{fmt(payout)} ₸ переведено</p>
               <p className="text-sm text-gray-500">Специалисту {expert.name}</p>
-              <p className="text-xs text-halyk font-medium mt-0.5">+600 ₸ кэшбэк Halyk Bonus</p>
+              <p className="text-xs text-halyk font-medium mt-0.5">+{fmt(cashback)} ₸ кэшбэк Halyk Bonus</p>
             </div>
           </div>
 
@@ -147,7 +166,7 @@ function CompleteContent() {
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-      <MobileHeader title="Завершить сделку" backHref={`/deal/${id}?expert=${expertId}`} />
+      <MobileHeader title="Завершить сделку" backHref={`/deal/${roomCode}?expert=${expertId}`} />
 
       <div className="px-4 py-5 space-y-4">
         <div className="bg-white rounded-2xl border border-gray-200 p-4 flex gap-3 items-center">
@@ -163,19 +182,19 @@ function CompleteContent() {
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Сумма в эскроу</span>
-              <span className="font-medium">60 000 ₸</span>
+              <span className="font-medium">{fmt(escrow)} ₸</span>
             </div>
             <div className="flex justify-between text-sm text-orange-600">
-              <span>Комиссия платформы (5%)</span>
-              <span>−3 000 ₸</span>
+              <span>Комиссия платформы ({commissionPct}%)</span>
+              <span>−{fmt(commission)} ₸</span>
             </div>
             <div className="flex justify-between text-sm text-halyk">
               <span>Ваш кэшбэк Halyk Bonus (1%)</span>
-              <span>+600 ₸ 🎁</span>
+              <span>+{fmt(cashback)} ₸ 🎁</span>
             </div>
             <div className="flex justify-between border-t pt-2 font-bold">
               <span>Специалист получит</span>
-              <span className="text-gray-900">57 000 ₸</span>
+              <span className="text-gray-900">{fmt(payout)} ₸</span>
             </div>
           </div>
         </div>
@@ -201,7 +220,7 @@ function CompleteContent() {
           ) : (
             <>
               <CheckCircle size={18} />
-              Release Payment · 57 000 ₸
+              Release Payment · {fmt(payout)} ₸
             </>
           )}
         </button>

@@ -1,10 +1,23 @@
 import Link from 'next/link';
 import { CheckCircle, Clock, Briefcase } from 'lucide-react';
 import StarRating from './ui/StarRating';
-import { Expert } from '@/lib/mock-data';
+
+// Структурный тип — подходит и для реального ApiExpert, и для мок-Expert.
+export interface ExpertCardData {
+  id: string;
+  name: string;
+  categoryLabel: string;
+  avatar: string;
+  is_verified: boolean;
+  hourly_rate: number;
+  rating: number;
+  completed_deals: number;
+  response_time: string;
+  specializations: string[];
+}
 
 interface ExpertCardProps {
-  expert: Expert;
+  expert: ExpertCardData;
   aiReason?: string;
   isTopPick?: boolean;
 }

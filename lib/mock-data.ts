@@ -602,6 +602,9 @@ export function getExpertById(id: string): Expert | undefined {
   return EXPERTS.find(e => e.id === id);
 }
 
+/** Демо-эксперт для фолбэков, когда реальный профиль ещё не загружен (юрист exp-5). */
+export const DEMO_EXPERT: Expert = getExpertById('exp-5')!;
+
 export function getProblemsByCategory(category: Category): Problem[] {
   return PROBLEMS.filter(p => p.category === category);
 }

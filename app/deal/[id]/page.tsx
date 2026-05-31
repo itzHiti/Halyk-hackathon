@@ -1,35 +1,18 @@
 'use client';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { Suspense, useState, useRef, useEffect, useCallback } from 'react';
-import { getExpertById } from '@/lib/mock-data';
-import { supabase } from '@/lib/supabase';
+import { DEMO_EXPERT } from '@/lib/mock-data';
+import {
+  Deal, Message,
+  getDeal, getMessages, openDealChannel,
+  offerDeal, acceptDeal, declineDeal, completeDeal as apiCompleteDeal,
+  sendMessage as apiSendMessage, currentUserId, getCurrentUser, rememberDeal,
+} from '@/lib/api';
+import { formatTime } from '@/lib/date';
+import { LoadingScreen, MessageScreen, MessageAction } from '@/components/ui/StatusScreen';
 import { Lock, Send, Shield, Info, CheckCircle, Clock, Paperclip, ChevronLeft, Loader2 } from 'lucide-react';
 
-const DEMO_EXPERT = getExpertById('exp-5')!;
 const COMMISSION_PCT = 5;
-
-interface Deal {
-  id: string;
-  room_code: string;
-  client_name: string;
-  expert_name: string | null;
-  description: string | null;
-  status: 'pending' | 'claimed' | 'offered' | 'active' | 'completed' | 'cancelled';
-  offer_price: number | null;
-  offer_deadline: string | null;
-  offer_comment: string | null;
-  commission_pct: number;
-  created_at: string;
-}
-
-interface Message {
-  id: string;
-  deal_id: string;
-  sender_role: 'client' | 'expert';
-  sender_name: string;
-  content: string;
-  created_at: string;
-}
 
 function DealContent() {
   const params = useParams<{ id: string }>();
@@ -42,6 +25,7 @@ function DealContent() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [newMessage, setNewMessage] = useState('');
+  const [expertOk, setExpertOk] = useState<boolean | null>(null); // верификация для role=expert
 
   // Expert offer form
   const [offerPrice, setOfferPrice] = useState('');
@@ -57,41 +41,41 @@ function DealContent() {
 
   // ── Load deal ──────────────────────────────────────────────────────────────
   const loadDeal = useCallback(async () => {
-    const { data } = await supabase.from('deals').select('*').eq('room_code', roomCode).single();
-    if (data) setDeal(data as Deal);
+    const data = await getDeal(roomCode, currentUserId());
+    if (data) { setDeal(data); rememberDeal(currentUserId(), roomCode); }
     setLoading(false);
-  }, [roomCode]);
+  }, [roomCode, role]);
 
   // ── Load messages ──────────────────────────────────────────────────────────
   const loadMessages = useCallback(async (dealId: string) => {
-    const { data } = await supabase.from('messages').select('*').eq('deal_id', dealId).order('created_at', { ascending: true });
-    if (data) setMessages(data as Message[]);
-  }, []);
+    const data = await getMessages(dealId, currentUserId());
+    if (data) setMessages(data);
+  }, [role]);
 
-  // ── Deal realtime subscription ─────────────────────────────────────────────
+  // ── Realtime: один WS-канал комнаты шлёт и обновления сделки, и сообщения ───
   useEffect(() => {
     loadDeal();
-    const ch = supabase.channel('deal-watch-' + roomCode)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'deals', filter: `room_code=eq.${roomCode}` },
-        (payload) => setDeal(payload.new as Deal))
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    const ws = openDealChannel(roomCode, (ev) => {
+      if (ev.type === 'deal.updated') {
+        setDeal(ev.data);
+      } else if (ev.type === 'message.created') {
+        setMessages(prev => (prev.find(m => m.id === ev.data.id) ? prev : [...prev, ev.data]));
+      }
+    });
+    return () => ws.close();
   }, [roomCode, loadDeal]);
 
-  // ── Messages realtime subscription ────────────────────────────────────────
+  // ── Initial messages load once we know the deal id ──────────────────────────
   useEffect(() => {
     if (!deal?.id) return;
     loadMessages(deal.id);
-    const ch = supabase.channel('messages-' + deal.id)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `deal_id=eq.${deal.id}` },
-        (payload) => setMessages(prev => {
-          const msg = payload.new as Message;
-          if (prev.find(m => m.id === msg.id)) return prev;
-          return [...prev, msg];
-        }))
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
   }, [deal?.id, loadMessages]);
+
+  // ── Гейтинг экспертных действий по верификации ──────────────────────────────
+  useEffect(() => {
+    if (role !== 'expert') { setExpertOk(true); return; }
+    getCurrentUser(currentUserId()).then(me => setExpertOk(me.is_verified_expert));
+  }, [role]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -102,17 +86,14 @@ function DealContent() {
     if (!deal || !offerPrice || !offerDeadline) return;
     setIsSubmittingOffer(true);
     const price = parseInt(offerPrice.replace(/\D/g, ''));
-    const commission = Math.round(price * COMMISSION_PCT / 100);
-    await supabase.from('deals').update({
-      status: 'offered',
+    // commission и escrow_amount считает бэкенд (BACKEND.md §5.5)
+    await offerDeal(deal.id, {
       expert_name: DEMO_EXPERT.name,
       offer_price: price,
       offer_deadline: offerDeadline,
       offer_comment: offerComment || 'Изучил задачу — готов приступить к работе.',
-      commission: commission,
       commission_pct: COMMISSION_PCT,
-      escrow_amount: price,
-    }).eq('id', deal.id);
+    }, currentUserId());
     setIsSubmittingOffer(false);
   };
 
@@ -120,15 +101,15 @@ function DealContent() {
   const acceptOffer = async () => {
     if (!deal) return;
     setIsAccepting(true);
-    await new Promise(r => setTimeout(r, 1500));
-    await supabase.from('deals').update({ status: 'active' }).eq('id', deal.id);
+    await new Promise(r => setTimeout(r, 1500)); // анимация «оплаты» — только на фронте
+    await acceptDeal(deal.id, currentUserId());
     setIsAccepting(false);
   };
 
   // ── Client declines offer ──────────────────────────────────────────────────
   const declineOffer = async () => {
     if (!deal) return;
-    await supabase.from('deals').update({ status: 'cancelled' }).eq('id', deal.id);
+    await declineDeal(deal.id, currentUserId());
     router.push('/halyk-pro');
   };
 
@@ -137,38 +118,42 @@ function DealContent() {
     if (!newMessage.trim() || !deal) return;
     const content = newMessage.trim();
     setNewMessage('');
-    await supabase.from('messages').insert({
-      deal_id: deal.id,
+    await apiSendMessage(deal.id, {
       sender_role: role,
       sender_name: role === 'client' ? (deal.client_name || 'Клиент') : (deal.expert_name || DEMO_EXPERT.name),
       content,
-    });
+    }, currentUserId());
   };
 
   // ── Complete deal ──────────────────────────────────────────────────────────
   const completeDeal = async () => {
     if (!deal) return;
-    await supabase.from('deals').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', deal.id);
+    await apiCompleteDeal(deal.id, currentUserId());
     router.push('/deal/' + roomCode + '/complete?role=' + role);
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 gap-3">
-        <Loader2 size={28} className="text-halyk animate-spin" />
-        <p className="text-gray-400 text-sm">Загружаем сделку...</p>
-      </div>
-    );
-  }
+  if (loading) return <LoadingScreen text="Загружаем сделку..." />;
 
   if (!deal) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 gap-3 px-6 text-center">
-        <p className="text-2xl">🔍</p>
-        <p className="font-semibold text-gray-700">Сделка не найдена</p>
-        <p className="text-sm text-gray-400">Проверьте ссылку или начните заново</p>
-        <button onClick={() => router.push('/halyk-pro')} className="mt-2 bg-halyk text-white rounded-xl px-5 py-2.5 text-sm font-medium">На главную</button>
-      </div>
+      <MessageScreen
+        icon={<p className="text-2xl">🔍</p>}
+        title="Сделка не найдена"
+        description="Проверьте ссылку или начните заново"
+        action={<MessageAction label="На главную" onClick={() => router.push('/halyk-pro')} />}
+      />
+    );
+  }
+
+  // Экспертные действия (оффер, чат как специалист) — только верифицированным
+  if (role === 'expert' && expertOk === false) {
+    return (
+      <MessageScreen
+        icon={<Shield size={32} className="text-orange-500" />}
+        title="Нужна верификация специалиста"
+        description="Чтобы откликаться на заявки и отправлять офферы, пройдите верификацию."
+        action={<MessageAction label="Пройти верификацию" onClick={() => router.push('/expert/verify')} />}
+      />
     );
   }
 
@@ -494,7 +479,7 @@ function DealContent() {
                     <p className="text-sm leading-relaxed">{msg.content}</p>
                   </div>
                   <p className={`text-[10px] text-gray-400 mt-0.5 ${isMe ? 'text-right' : 'text-left'}`}>
-                    {new Date(msg.created_at).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })}
+                    {formatTime(msg.created_at)}
                   </p>
                 </div>
               </div>
@@ -545,11 +530,11 @@ function DealContent() {
 
   // Cancelled
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 gap-3 px-6 text-center">
-      <p className="text-3xl">🚫</p>
-      <p className="font-semibold text-gray-700">Сделка отменена</p>
-      <button onClick={() => router.push('/halyk-pro')} className="mt-2 bg-halyk text-white rounded-xl px-5 py-2.5 text-sm font-medium">На главную</button>
-    </div>
+    <MessageScreen
+      icon={<p className="text-3xl">🚫</p>}
+      title="Сделка отменена"
+      action={<MessageAction label="На главную" onClick={() => router.push('/halyk-pro')} />}
+    />
   );
 }
 

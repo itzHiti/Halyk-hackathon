@@ -1,13 +1,39 @@
 'use client';
-import { getExpertById } from '@/lib/mock-data';
+import { useEffect, useState } from 'react';
+import { DEMO_EXPERT } from '@/lib/mock-data';
 import MobileHeader from '@/components/ui/MobileHeader';
 import StarRating from '@/components/ui/StarRating';
+import { currentUserId, getCurrentUser, getExpert, User, ApiExpert } from '@/lib/api';
 import { CheckCircle, Shield, Upload, ExternalLink } from 'lucide-react';
 
-const DEMO_EXPERT = getExpertById('exp-5')!;
-
 export default function ExpertProfilePage() {
-  const expert = DEMO_EXPERT;
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<ApiExpert | null>(null);
+
+  useEffect(() => {
+    const uid = currentUserId();
+    getCurrentUser(uid).then(me => {
+      setUser(me);
+      if (me.expert_id) getExpert(me.expert_id).then(p => { if (p) setProfile(p); }).catch(() => {});
+    });
+  }, []);
+
+  // Реальный профиль (/experts/{id}) с фолбэком на сид-эксперта (exp-5).
+  // reviews оставляем из сид-данных (форма отзывов на бэке иная: {author,rating,text}).
+  const expert = {
+    ...DEMO_EXPERT,
+    name: profile?.name || user?.display_name || DEMO_EXPERT.name,
+    bio: profile?.bio || DEMO_EXPERT.bio,
+    specializations: profile?.specializations?.length ? profile.specializations : DEMO_EXPERT.specializations,
+    hourly_rate: profile?.hourly_rate || DEMO_EXPERT.hourly_rate,
+    rating: profile?.rating || DEMO_EXPERT.rating,
+    completed_deals: profile?.completed_deals ?? DEMO_EXPERT.completed_deals,
+    experience_years: profile?.experience_years ?? DEMO_EXPERT.experience_years,
+    cases: profile?.cases?.length ? profile.cases : DEMO_EXPERT.cases,
+    avatar: profile?.avatar || DEMO_EXPERT.avatar,
+    categoryLabel: profile?.categoryLabel || DEMO_EXPERT.categoryLabel,
+    is_verified: profile?.is_verified ?? user?.is_verified_expert ?? DEMO_EXPERT.is_verified,
+  };
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">

@@ -5,6 +5,7 @@ import MobileHeader from '@/components/ui/MobileHeader';
 import { CATEGORIES, PROBLEMS, Category } from '@/lib/mock-data';
 import { Send, Sparkles, Users } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { aiConsult, currentUserId } from '@/lib/api';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -54,16 +55,11 @@ function AiChatContent() {
     setIsLoading(true);
 
     try {
-      const res = await fetch('/api/ai/consult', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: newMessages,
-          category,
-          problemId: problemId !== 'custom' ? problemId : undefined,
-        }),
-      });
-      const data = await res.json();
+      const data = await aiConsult({
+        messages: newMessages,
+        category,
+        problemId: problemId !== 'custom' ? problemId : undefined,
+      }, currentUserId());
       const aiMessage: Message = { role: 'assistant', content: data.message || '' };
       setMessages([...newMessages, aiMessage]);
       if (data.suggest_expert) setSuggestExpert(true);

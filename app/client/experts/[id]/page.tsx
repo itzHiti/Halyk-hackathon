@@ -1,37 +1,83 @@
 'use client';
 import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { getExpertById } from '@/lib/mock-data';
+import { getExpert, ApiExpert } from '@/lib/api';
 import MobileHeader from '@/components/ui/MobileHeader';
 import StarRating from '@/components/ui/StarRating';
+import { LoadingScreen, MessageScreen, MessageAction } from '@/components/ui/StatusScreen';
 import { CheckCircle, Clock, Briefcase, Star, Shield } from 'lucide-react';
+
+interface ViewReview { author: string; company?: string; rating: number; text: string; date?: string }
+interface ViewExpert {
+  id: string; name: string; category: string; categoryLabel: string;
+  avatar: string; is_verified: boolean; rating: number; experience_years: number;
+  completed_deals: number; response_time: string; hourly_rate: number; bio: string;
+  specializations: string[]; cases: string[]; reviews: ViewReview[];
+}
+
+function fromApi(e: ApiExpert): ViewExpert {
+  return {
+    ...e,
+    reviews: (e.reviews || []).map(r => ({ author: r.author, rating: r.rating, text: r.text })),
+  };
+}
+
+function fromMock(id: string): ViewExpert | null {
+  const m = getExpertById(id);
+  if (!m) return null;
+  return {
+    id: m.id, name: m.name, category: m.category, categoryLabel: m.categoryLabel,
+    avatar: m.avatar, is_verified: m.is_verified, rating: m.rating, experience_years: m.experience_years,
+    completed_deals: m.completed_deals, response_time: m.response_time, hourly_rate: m.hourly_rate,
+    bio: m.bio, specializations: m.specializations, cases: m.cases,
+    reviews: m.reviews.map(r => ({ author: r.author, company: r.company, rating: r.rating, text: r.comment, date: r.date })),
+  };
+}
 
 export default function ExpertProfilePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const expert = getExpertById(id);
+
+  const [expert, setExpert] = useState<ViewExpert | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let view: ViewExpert | null = null;
+      try {
+        const real = await getExpert(id);
+        if (real) view = fromApi(real);
+      } catch { /* бэкенд недоступен */ }
+      if (!view) view = fromMock(id);
+      if (!cancelled) { setExpert(view); setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  if (loading) return <LoadingScreen text="Загружаем профиль..." />;
 
   if (!expert) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <p className="text-gray-400">Специалист не найден</p>
-      </div>
+      <MessageScreen
+        icon={<p className="text-2xl">🔍</p>}
+        title="Специалист не найден"
+        action={<MessageAction label="К выбору специалиста" onClick={() => router.push('/client/category')} />}
+      />
     );
   }
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-      <MobileHeader title="Профиль специалиста" />
+      <MobileHeader title="Профиль специалиста" backHref={`/client/experts?category=${expert.category}`} />
 
       <div className="flex-1 overflow-y-auto">
         {/* Profile header */}
         <div className="bg-white px-4 pt-5 pb-5">
           <div className="flex gap-4">
             <div className="relative flex-shrink-0">
-              <img
-                src={expert.avatar}
-                alt={expert.name}
-                className="w-20 h-20 rounded-2xl bg-gray-100 object-cover"
-              />
+              <img src={expert.avatar} alt={expert.name} className="w-20 h-20 rounded-2xl bg-gray-100 object-cover" />
               {expert.is_verified && (
                 <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5">
                   <CheckCircle size={20} className="text-halyk fill-halyk" />
@@ -79,38 +125,40 @@ export default function ExpertProfilePage() {
         </div>
 
         {/* Specializations */}
-        <div className="bg-white mt-2 px-4 py-4">
-          <h2 className="font-semibold text-gray-900 mb-3 text-sm">Специализации</h2>
-          <div className="flex flex-wrap gap-2">
-            {expert.specializations.map(spec => (
-              <span key={spec} className="bg-halyk-light text-halyk-dark text-xs font-medium px-3 py-1 rounded-full">
-                {spec}
-              </span>
-            ))}
+        {expert.specializations.length > 0 && (
+          <div className="bg-white mt-2 px-4 py-4">
+            <h2 className="font-semibold text-gray-900 mb-3 text-sm">Специализации</h2>
+            <div className="flex flex-wrap gap-2">
+              {expert.specializations.map(spec => (
+                <span key={spec} className="bg-halyk-light text-halyk-dark text-xs font-medium px-3 py-1 rounded-full">
+                  {spec}
+                </span>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Cases */}
-        <div className="bg-white mt-2 px-4 py-4">
-          <h2 className="font-semibold text-gray-900 mb-3 text-sm">Ключевые кейсы</h2>
-          <div className="space-y-2">
-            {expert.cases.map((c, i) => (
-              <div key={i} className="flex gap-2">
-                <CheckCircle size={14} className="text-halyk mt-0.5 flex-shrink-0" />
-                <p className="text-sm text-gray-600 leading-relaxed">{c}</p>
-              </div>
-            ))}
+        {expert.cases.length > 0 && (
+          <div className="bg-white mt-2 px-4 py-4">
+            <h2 className="font-semibold text-gray-900 mb-3 text-sm">Ключевые кейсы</h2>
+            <div className="space-y-2">
+              {expert.cases.map((c, i) => (
+                <div key={i} className="flex gap-2">
+                  <CheckCircle size={14} className="text-halyk mt-0.5 flex-shrink-0" />
+                  <p className="text-sm text-gray-600 leading-relaxed">{c}</p>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Rate */}
         <div className="bg-white mt-2 px-4 py-4">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold text-gray-900 text-sm">Стоимость</h2>
             <div className="text-right">
-              <p className="text-xl font-bold text-gray-900">
-                {expert.hourly_rate.toLocaleString('ru')} ₸
-              </p>
+              <p className="text-xl font-bold text-gray-900">{expert.hourly_rate.toLocaleString('ru')} ₸</p>
               <p className="text-xs text-gray-500">/ час</p>
             </div>
           </div>
@@ -120,35 +168,37 @@ export default function ExpertProfilePage() {
         </div>
 
         {/* Reviews */}
-        <div className="bg-white mt-2 px-4 py-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-gray-900 text-sm">
-              Отзывы ({expert.reviews.length})
-            </h2>
-            <StarRating rating={expert.rating} size={12} />
-          </div>
-          <div className="space-y-3">
-            {expert.reviews.map(review => (
-              <div key={review.id} className="bg-gray-50 rounded-xl p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-xs font-semibold text-gray-800">{review.author}</p>
-                    {review.company && (
-                      <p className="text-[10px] text-gray-400">{review.company}</p>
-                    )}
+        {expert.reviews.length > 0 && (
+          <div className="bg-white mt-2 px-4 py-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold text-gray-900 text-sm">Отзывы ({expert.reviews.length})</h2>
+              <StarRating rating={expert.rating} size={12} />
+            </div>
+            <div className="space-y-3">
+              {expert.reviews.map((review, i) => (
+                <div key={i} className="bg-gray-50 rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-gray-800">{review.author}</p>
+                      {review.company && <p className="text-[10px] text-gray-400">{review.company}</p>}
+                    </div>
+                    <div className="flex flex-shrink-0">
+                      {[1, 2, 3, 4, 5].map(s => (
+                        <Star key={s} size={10} className={s <= review.rating ? 'star-filled' : 'star-empty'} />
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex flex-shrink-0">
-                    {[1,2,3,4,5].map(s => (
-                      <Star key={s} size={10} className={s <= review.rating ? 'star-filled' : 'star-empty'} />
-                    ))}
-                  </div>
+                  <p className="text-xs text-gray-600 mt-1.5 leading-relaxed">{review.text}</p>
+                  {review.date && (
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      {new Date(review.date).toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' })}
+                    </p>
+                  )}
                 </div>
-                <p className="text-xs text-gray-600 mt-1.5 leading-relaxed">{review.comment}</p>
-                <p className="text-[10px] text-gray-400 mt-1">{new Date(review.date).toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="h-28" />
       </div>

@@ -1,17 +1,36 @@
 'use client';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import MobileHeader from '@/components/ui/MobileHeader';
 import { CATEGORIES, PROBLEMS, Category } from '@/lib/mock-data';
+import { listProblems, ApiProblem } from '@/lib/api';
 import { ArrowRight } from 'lucide-react';
+
+// Иконка задачи: бэкенд отдаёт имя ("chart") — показываем эмодзи только если он есть,
+// иначе нейтральный fallback. (Эмодзи — не ASCII.)
+function displayIcon(icon: string | undefined): string {
+  if (icon && /[^\x00-\x7F]/.test(icon)) return icon;
+  return '📋';
+}
 
 function ProblemList() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const category = searchParams.get('category') as Category || 'accountant';
+  const category = (searchParams.get('category') as Category) || 'accountant';
 
   const cat = CATEGORIES.find(c => c.id === category);
-  const problems = PROBLEMS.filter(p => p.category === category);
+  const mockFallback: ApiProblem[] = PROBLEMS.filter(p => p.category === category).map(p => ({
+    id: p.id, category: p.category, title: p.title, description: p.description,
+    icon: p.icon, ai_can_answer: p.ai_can_answer, ai_answer: p.ai_answer ?? null,
+  }));
+
+  const [problems, setProblems] = useState<ApiProblem[]>(mockFallback);
+
+  useEffect(() => {
+    listProblems(category)
+      .then(real => { if (real.length) setProblems(real); })
+      .catch(() => { /* бэкенд недоступен — остаются моки */ });
+  }, [category]);
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
@@ -34,7 +53,7 @@ function ProblemList() {
               className="w-full text-left bg-white rounded-2xl border border-gray-200 p-4 flex items-center gap-3 active:scale-98 transition-transform hover:border-halyk hover:shadow-sm"
             >
               <div className="w-11 h-11 rounded-xl bg-gray-50 flex items-center justify-center text-xl flex-shrink-0">
-                {problem.icon}
+                {displayIcon(problem.icon)}
               </div>
               <div className="flex-1">
                 <h3 className="font-semibold text-gray-900 text-sm">{problem.title}</h3>
